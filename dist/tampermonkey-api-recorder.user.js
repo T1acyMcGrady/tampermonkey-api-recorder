@@ -506,7 +506,10 @@
       return;
     }
 
-    await persistRecord(record);
+    const storedRecord = await persistRecord(record);
+    if (storedRecord.classification === 'success') {
+      await createOrUpdateTemplateForRecord(storedRecord, { silent: true });
+    }
     if (record.classification === 'fail') {
       addFailureToast(record);
     }
@@ -889,6 +892,7 @@
     state.currentSession.lastActivityAt = Date.now();
     await state.db.put(STORE_NAMES.sessions, state.currentSession);
     state.recentSessions = await loadRecentSessions();
+    return storedRecord;
   }
 
   async function createSession() {
@@ -953,20 +957,7 @@
       scheduleRender();
       return;
     }
-    const template = buildTemplateFromRecord(record);
-    const existing = state.templates.find((item) => item.matchKey === template.matchKey);
-    if (existing) {
-      template.id = existing.id;
-      template.createdAt = existing.createdAt;
-      template.sampleCount = Number(existing.sampleCount || 1) + 1;
-    }
-    await state.db.put(STORE_NAMES.templates, template);
-    upsertTemplateInState(template);
-    addToast({
-      title: existing ? '模板已更新' : '模板已保存',
-      body: `${template.method} ${template.pathname}`,
-    });
-    scheduleRender();
+    await createOrUpdateTemplateForRecord(record, { silent: false });
   }
 
   async function handleReplayRecord(recordId) {
@@ -986,7 +977,7 @@
     if (!template) {
       return;
     }
-    await runReplay([template]);
+    await runReplay([template], { skipConfirm: true });
   }
 
   async function handleReplaySelectedTemplates() {
@@ -996,13 +987,15 @@
       scheduleRender();
       return;
     }
-    await runReplay(templates);
+    await runReplay(templates, { skipConfirm: true });
   }
 
-  async function runReplay(templates) {
+  async function runReplay(templates, options) {
     if (!templates || templates.length === 0) {
       return;
     }
+
+    const replayOptions = Object.assign({ skipConfirm: false }, options || {});
 
     const blockedReason = getReplayBlockedReason();
     if (blockedReason) {
@@ -1021,7 +1014,11 @@
       scheduleRender();
       return;
     }
-    if ((warningCount > 0 || templates.length > 5) && state.config.replay.confirmWarning) {
+    if (
+      !replayOptions.skipConfirm &&
+      (warningCount > 0 || templates.length > 5) &&
+      state.config.replay.confirmWarning
+    ) {
       const accepted = window.confirm(
         `即将回放 ${templates.length} 条模板，warning ${warningCount} 条。继续执行？`
       );
@@ -1345,6 +1342,29 @@
       seen.add(signature);
       return true;
     });
+  }
+
+  async function createOrUpdateTemplateForRecord(record, options) {
+    const template = buildTemplateFromRecord(record);
+    const existing = state.templates.find((item) => item.matchKey === template.matchKey);
+    if (existing) {
+      template.id = existing.id;
+      template.createdAt = existing.createdAt;
+      template.sampleCount = Number(existing.sampleCount || 1) + 1;
+    }
+    await state.db.put(STORE_NAMES.templates, template);
+    upsertTemplateInState(template);
+
+    const saveOptions = Object.assign({ silent: false }, options || {});
+    if (!saveOptions.silent) {
+      addToast({
+        title: existing ? '模板已更新' : '模板已保存',
+        body: `${template.method} ${template.pathname}`,
+      });
+      scheduleRender();
+    }
+
+    return template;
   }
 
   function replaceDynamicFields(target, dynamicFields) {
@@ -2199,7 +2219,7 @@
             }
             ${
               options.allowTemplate
-                ? `<button class="tmar-button" data-action="save-template" data-value="${record.id}" type="button">${templateExists ? '更新模板' : '生成模板'}</button>`
+                ? `<button class="tmar-button" data-action="save-template" data-value="${record.id}" type="button">${templateExists ? '刷新模板' : '立即入回放列表'}</button>`
                 : ''
             }
             ${
@@ -2432,7 +2452,7 @@
               <button class="tmar-button" data-action="copy-summary" data-value="${record.id}" type="button">复制摘要</button>
               ${
                 record.classification === 'success'
-                  ? `<button class="tmar-button" data-action="save-template" data-value="${record.id}" type="button">生成模板</button>`
+                  ? `<button class="tmar-button" data-action="save-template" data-value="${record.id}" type="button">刷新模板</button>`
                   : ''
               }
               ${
