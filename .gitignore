@@ -1,0 +1,6 @@
+.DS_Store
+docs/接口规则设计.md
+docs/油猴脚本技术设计.md
+docs/MVP功能清单.md
+docs/UI交互草图.md
+src/tampermonkey-api-recorder.user.js
